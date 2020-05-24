@@ -1,0 +1,10 @@
+.vscode/
+venv/
+venv2.7/
+
+.idea/
+
+app/models/
+
+
+*.pt

@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: DeploymentConfig
+metadata:
+  annotations:
+    kompose.cmd: kompose --file ../docker-compose.yaml --provider openshift convert
+    kompose.version: 1.21.0 (992df58d8)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: init
+  name: init
+spec:
+  replicas: 1
+  selector:
+    io.kompose.service: init
+  strategy:
+    resources: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        io.kompose.service: init
+    spec:
+      containers:
+      - args:
+        - init.py
+        - --url
+        - redis://redismod:6379
+        image: ' '
+        name: init
+        resources: {}
+      restartPolicy: Always
+  test: false
+  triggers:
+  - type: ConfigChange
+  - imageChangeParams:
+      automatic: true
+      containerNames:
+      - init
+      from:
+        kind: ImageStreamTag
+        name: init:latest
+    type: ImageChange
+status: {}
