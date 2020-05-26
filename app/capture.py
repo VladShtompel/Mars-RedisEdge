@@ -71,7 +71,7 @@ class Video:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('infile', help='Input file (leave empty to use webcam)', nargs='?', type=str, default=None)
-    parser.add_argument('-o', '--output', help='Output stream key name', type=str, default='camera:0')
+    parser.add_argument('-o', '--output', help='Output stream key name', type=str, default='camera_in:0')
     parser.add_argument('-u', '--url', help='Redis URL', type=str, default='redis://$REDIS_URL:6379')
     parser.add_argument('-w', '--webcam', help='Webcam device number', type=int, default=0)
     parser.add_argument('-v', '--verbose', help='Verbose output', type=bool, default=False)

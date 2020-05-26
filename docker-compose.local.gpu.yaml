@@ -47,7 +47,50 @@ services:
     #  - /dev/video0:/dev/video0
     # command: ['capture.py', '--url', 'redis://redismod:6379']
     command: ['capture.py', '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
-    
+
+  capture_1:
+    build: ./app
+    depends_on:
+      - init
+    command: ['capture.py', '-o', 'camera_in:1',  '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
+
+  capture_2:
+    build: ./app
+    depends_on:
+      - init
+    command: ['capture.py', '-o', 'camera_in:2', '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
+
+  capture_3:
+    build: ./app
+    depends_on:
+      - init
+    command: ['capture.py', '-o', 'camera_in:3', '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
+
+  capture_4:
+    build: ./app
+    depends_on:
+      - init
+    command: ['capture.py', '-o', 'camera_in:4', '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
+
+  capture_5:
+    build: ./app
+    depends_on:
+      - init
+    command: ['capture.py', '-o', 'camera_in:5', '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
+
+  capture_6:
+    build: ./app
+    depends_on:
+      - init
+    command: ['capture.py', '-o', 'camera_in:6', '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
+
+  capture_7:
+    build: ./app
+    depends_on:
+      - init
+    command: ['capture.py', '-o', 'camera_in:7', '--url', 'redis://$REDIS_URL:6379', 'data/test.mp4']
+
+
 networks:
   default:
     external:

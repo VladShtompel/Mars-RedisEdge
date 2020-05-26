@@ -304,42 +304,42 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "prf_read{camera=\"0\"}",
+          "expr": "prf_read{camera_in=\"0\"}",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "read",
           "refId": "A"
         },
         {
-          "expr": "prf_resize{camera=\"0\"}",
+          "expr": "prf_resize{camera_in=\"0\"}",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "resize",
           "refId": "B"
         },
         {
-          "expr": "prf_model{camera=\"0\"}",
+          "expr": "prf_model{camera_in=\"0\"}",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "model",
           "refId": "C"
         },
         {
-          "expr": "prf_script{camera=\"0\"}",
+          "expr": "prf_script{camera_in=\"0\"}",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "script",
           "refId": "D"
         },
         {
-          "expr": "prf_boxes{camera=\"0\"}",
+          "expr": "prf_boxes{camera_in=\"0\"}",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "boxes",
           "refId": "E"
         },
         {
-          "expr": "prf_store{camera=\"0\"}",
+          "expr": "prf_store{camera_in=\"0\"}",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "store",

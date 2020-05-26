@@ -11,7 +11,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-r', '--refresh', help='Refresh period (sec)', type=float, default=0.5)
     parser.add_argument('-u', '--url', help='Redis URL', type=str, default='redis://$REDIS_URL:6379')
-    parser.add_argument('-v', '--video', help='Video stream key name', type=str, default='camera:0')
+    parser.add_argument('-v', '--video', help='Video stream key name', type=str, default='camera_in:0')
     args = parser.parse_args()
 
     # Set up Redis connection

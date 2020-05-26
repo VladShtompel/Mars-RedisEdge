@@ -38,6 +38,7 @@ def torch_non_max_suppression(prediction):
 	iou_thres = 0.5
 	classes = None
 	multi_label = False
+	mode = 'vision'
 	"""
 	Performs  Non-Maximum Suppression on inference results
 	Returns detections with shape:
@@ -60,7 +61,7 @@ def torch_non_max_suppression(prediction):
 
 		# If none remain process next image
 		if not x.shape[0]:
-			output.append(torch.tensor([]))
+			output.append(torch.zeros((1, 6)))
 			continue
 
 		# Compute conf
@@ -88,17 +89,18 @@ def torch_non_max_suppression(prediction):
 		# If none remain process next image
 		n = x.shape[0]  # number of boxes
 		if not n:
-			output.append(torch.tensor([]))
+			output.append(torch.zeros((1, 6)))
 			continue
 
 		# Batched NMS
 		c = x[:, 5]  # classes
 		boxes, scores = x[:, :4].clone().detach() + c.reshape(-1, 1) * max_wh, x[:, 4]  # boxes (offset by class), scores
+
 		iou_boxes = torch_box_iou(boxes, boxes)
 		iou = torch.triu(iou_boxes, diagonal=1)  # upper triangular iou matrix
-		i = iou.max(0, keepdim=True)[0] < iou_thres
+		i = iou.max(0)[0] < iou_thres
 
-		output.append(x[i.squeeze()])
+		output.append(x[i])
 
 	return output
 

@@ -68,8 +68,8 @@ def video_feed():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('camera', help='Input camera stream key', nargs='?', type=str, default='camera:0')
-    parser.add_argument('boxes', help='Input model stream key', nargs='?', type=str, default='camera:0:yolo')
+    parser.add_argument('camera', help='Input camera stream key', nargs='?', type=str, default='camera_in:0')
+    parser.add_argument('boxes', help='Input model stream key', nargs='?', type=str, default='camera_out:0:yolo')
     parser.add_argument('--field', help='Image field name', type=str, default='image')
     parser.add_argument('--fmt', help='Frame storage format', type=str, default='.jpg')
     parser.add_argument('-u', '--url', help='Redis URL', type=str, default='redis://$REDIS_URL:6379')
