@@ -89,6 +89,7 @@ per step metrics.
 '''
 prf = Profiler()
 
+
 def downsampleStream(x):
     ''' Drops input frames to match FPS '''
     global _mspf, _next_ts
@@ -101,6 +102,7 @@ def downsampleStream(x):
     if sample_it:                                           # Drop frames until the next timestamp is in the present/past
         _next_ts = ts + _mspf
     return sample_it
+
 
 def clip_coords(boxes, img_shape):
     # Clip bounding xyxy bounding boxes to image shape (height, width)
@@ -149,24 +151,20 @@ def letterbox_image(imgs, inp_dim):
 def runYolo(X):
     ''' Runs the model on an input image from the stream '''
     global prf
-    IMG_SIZE = 416     # Model's input image size
+    global IMG_SIZE    # Model's input image size
     prf.start()        # Start a new profiler iteration
 
-    # log('read')
+    log('read')
     # log(f"keys {X.keys()}")
     # log(f"vals {X.values()}")
     # Read the image from the stream's message
+
     imgs = []
     ids = []
     s_keys = sorted(X.keys())
-    # log(str(s_keys))
-    # for sk in s_keys:
-    #     log(str(sk) + " - " + str(X[sk][1]))
-
     for key in s_keys:
-        img, _id = X[key]['image'], X[key]['id']
-        buf = io.BytesIO(eval(img))
-        imgs.append(np.array(Image.open(buf)))
+        img, _id = load_img(X[key]['image']), X[key]['id']
+        imgs.append(img)
         # log(str(imgs[-1].shape))
         ids.append(_id)
 
@@ -175,7 +173,6 @@ def runYolo(X):
     orig_shape = numpy_imgs[0].shape
     prf.add('read')
 
-    # log('resize')
     # Resize, normalize and tensorize the image for the model (number of images, width, height, channels)
     image_tensor = letterbox_image(numpy_imgs, (IMG_SIZE, IMG_SIZE))
     image_tensor = image_tensor.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
@@ -184,7 +181,7 @@ def runYolo(X):
     image_tensor = redisAI.createTensorFromBlob('FLOAT', image_tensor.shape, bytearray(image_tensor.tobytes()))
 
     prf.add('resize')
-
+    log('resize')
     # log('model')
     # Create the RedisAI model runner and run it
     modelRunner = redisAI.createModelRunner('yolo:model')
@@ -194,14 +191,14 @@ def runYolo(X):
     model_output = model_replies[0]
     prf.add('model')
     # log(f"model result shape {redisAI.tensorGetDims(model_output)}")
-    # log('script')
+    log('model')
     # The model's output is processed with a PyTorch script for non maxima suppression
     scriptRunner = redisAI.createScriptRunner('yolo:script', 'boxes_from_yolo')
     redisAI.scriptRunnerAddInput(scriptRunner, model_output)
     [redisAI.scriptRunnerAddOutput(scriptRunner) for _, _ in enumerate(X.keys())]
     script_reply = redisAI.scriptRunnerRun(scriptRunner)
     prf.add('script')
-
+    log('script')
     # log('boxes')
     # The script outputs bounding boxes
     shape = redisAI.tensorGetDims(script_reply)
@@ -229,13 +226,13 @@ def runYolo(X):
         # Store boxes as a flat list
         boxes_out += [x1,y1,x2,y2]
     prf.add('boxes')
-
+    log('boxes')
     return ids[0], people_count, boxes_out
 
 def storeResults(x):
     ''' Stores the results in Redis Stream and TimeSeries data structures '''
     global _mspf, prf
-    ref_id, people, boxes= x[0], int(x[1]), x[2]
+    ref_id, people, boxes = x[0], int(x[1]), x[2]
     ref_msec = int(str(ref_id).split('-')[0])
 
     # Store the output in its own stream
@@ -279,7 +276,6 @@ def storeResults(x):
         return 'I counted {} people in the frame! Ah ah ah!'.format(people)
 
 def frameAccumulator(a, r):
-
     a = a if a else OrderedDict()
     camera, msg_id = sorted(r['value'].keys())
     a[camera] = {'image': r['value'][camera], 'id': r['value'][msg_id], 'key': r['key']}
@@ -291,6 +287,36 @@ def multiplexer(x):
     execute('XADD', f'batchStream{{{hashtag()}}}', '*', x['key'], x['value']['image'], 'id', x['id'])
 
 
+def load_img(x):
+    global IMG_SIZE
+    if not isinstance(x, np.ndarray):
+        try:
+            buf = io.BytesIO(eval(x))
+            im = np.array(Image.open(buf))
+        except:
+            im = np.zeros((IMG_SIZE, IMG_SIZE, 3))
+    else:
+        im = x
+
+    return im
+
+
+def pad_batch(x):
+    global BATCH_SIZE
+    log("before pad: "+str(len(x.keys())))
+    some_item = list(x.values())[0]
+    an_img, an_id, a_key = load_img(some_item['image']), some_item['id'], some_item['key']
+    if len(x.keys()) < BATCH_SIZE:
+        for k in [f'camera_in:{i}' for i in range(BATCH_SIZE)]:
+            if k not in x.keys():
+                log(k)
+                x[k] = {'image': np.zeros_like(an_img), 'id': an_id, 'key': a_key}
+    log("after pad: "+str(len(x.keys())))
+    return x
+
+
+IMG_SIZE = 416
+BATCH_SIZE = 8
 # Create and register a gear that for each message in the stream
 gb_mux = GearsBuilder('StreamReader')
 gb_mux.map(multiplexer)
@@ -300,11 +326,12 @@ gb_mux.register('camera_in:*')
 
 gb = GearsBuilder('StreamReader')
 gb.accumulate(frameAccumulator)
-gb.filter(lambda x: len(x.keys()) == 8)
+# gb.filter(lambda x: len(x.keys()) == 8)
+gb.map(pad_batch)
 gb.filter(downsampleStream)  # Filter out high frame rate
 gb.map(runYolo)              # Run the model
 gb.map(storeResults)         # Store the results
-gb.register('batchStream*', batch=20, durration=60)
+gb.register('batchStream*', batch=8, durration=15)
 
 
 

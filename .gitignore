@@ -8,3 +8,5 @@ app/models/
 
 
 *.pt
+
+app/data/
