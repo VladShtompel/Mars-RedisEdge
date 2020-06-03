@@ -3,6 +3,7 @@ import argparse
 import cv2
 import redis
 import time
+import pickle
 from urllib.parse import urlparse
 
 class SimpleMovingAverage(object):
@@ -31,8 +32,8 @@ class Video:
             self.cam.set(cv2.CAP_PROP_FPS, fps)
             self.fps = fps
             # TODO: some cameras don't respect the fps directive
-            self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
-            self.cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
+            # self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, 720)
+            # self.cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 576)
         else:
             self.fps = self.cam.get(cv2.CAP_PROP_FPS)
             self.sma = SimpleMovingAverage(value=0.1, count=19)

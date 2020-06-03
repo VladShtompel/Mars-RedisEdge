@@ -57,9 +57,11 @@ class Profiler(object):
         self.last = now
         return value
 
-    def start(self):
+    def start(self, s_t=None):
         ''' Starts the profiler '''
-        self.last = time()*1000
+        if s_t is None:
+            s_t = time()*1000
+        self.last = s_t
 
     def add(self, name):
         ''' Adds/updates a step's duration '''
@@ -152,9 +154,8 @@ def runYolo(X):
     ''' Runs the model on an input image from the stream '''
     global prf
     global IMG_SIZE    # Model's input image size
-    prf.start()        # Start a new profiler iteration
 
-    log('read')
+    # log('read')
     # log(f"keys {X.keys()}")
     # log(f"vals {X.values()}")
     # Read the image from the stream's message
@@ -162,6 +163,8 @@ def runYolo(X):
     imgs = []
     ids = []
     s_keys = sorted(X.keys())
+    prf.start(int(X[s_keys[0]]['id'].split('-')[0]))        # Start a new profiler iteration
+
     for key in s_keys:
         img, _id = load_img(X[key]['image']), X[key]['id']
         imgs.append(img)
@@ -176,13 +179,11 @@ def runYolo(X):
     # Resize, normalize and tensorize the image for the model (number of images, width, height, channels)
     image_tensor = letterbox_image(numpy_imgs, (IMG_SIZE, IMG_SIZE))
     image_tensor = image_tensor.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
-    # log('tensor')
     # log("after reshape:" + str(image_tensor.shape))
     image_tensor = redisAI.createTensorFromBlob('FLOAT', image_tensor.shape, bytearray(image_tensor.tobytes()))
 
     prf.add('resize')
-    log('resize')
-    # log('model')
+    # log('resize')
     # Create the RedisAI model runner and run it
     modelRunner = redisAI.createModelRunner('yolo:model')
     redisAI.modelRunnerAddInput(modelRunner, 'input', image_tensor)
@@ -191,15 +192,14 @@ def runYolo(X):
     model_output = model_replies[0]
     prf.add('model')
     # log(f"model result shape {redisAI.tensorGetDims(model_output)}")
-    log('model')
+    # log('model')
     # The model's output is processed with a PyTorch script for non maxima suppression
     scriptRunner = redisAI.createScriptRunner('yolo:script', 'boxes_from_yolo')
     redisAI.scriptRunnerAddInput(scriptRunner, model_output)
     [redisAI.scriptRunnerAddOutput(scriptRunner) for _, _ in enumerate(X.keys())]
     script_reply = redisAI.scriptRunnerRun(scriptRunner)
     prf.add('script')
-    log('script')
-    # log('boxes')
+    # log('script')
     # The script outputs bounding boxes
     shape = redisAI.tensorGetDims(script_reply)
     buf = redisAI.tensorGetDataAsBlob(script_reply)
@@ -226,7 +226,7 @@ def runYolo(X):
         # Store boxes as a flat list
         boxes_out += [x1,y1,x2,y2]
     prf.add('boxes')
-    log('boxes')
+    # log('boxes')
     return ids[0], people_count, boxes_out
 
 def storeResults(x):
@@ -291,8 +291,20 @@ def load_img(x):
     global IMG_SIZE
     if not isinstance(x, np.ndarray):
         try:
-            buf = io.BytesIO(eval(x))
-            im = np.array(Image.open(buf))
+            s = time()
+            ev = eval(x)
+            t_ev = time()
+            buf = io.BytesIO(ev)
+            t_buf = time()
+            opn = Image.open(buf)
+            # npi = np.fromstring(opn, np.uint8)#.reshape((720, 576, 3))
+            t_opn = time()
+            # im = cv2.imdecode(npi, 1)[:, :, ::-1] #np.array(opn)
+            # im = npi
+            im = np.array(opn)
+            t_np = time()
+            t_ttl = t_np - s
+            # log(f'eval {t_ev-s:.6f} buf {t_buf-t_ev:.6f} open {t_opn-t_buf:.6f} numpy {t_np-t_opn:.6f} total {t_ttl:.6f}')
         except:
             im = np.zeros((IMG_SIZE, IMG_SIZE, 3))
     else:
@@ -303,21 +315,19 @@ def load_img(x):
 
 def pad_batch(x):
     global BATCH_SIZE
-    log("before pad: "+str(len(x.keys())))
     some_item = list(x.values())[0]
+    # log(str(some_item))
     an_img, an_id, a_key = load_img(some_item['image']), some_item['id'], some_item['key']
     if len(x.keys()) < BATCH_SIZE:
         for k in [f'camera_in:{i}' for i in range(BATCH_SIZE)]:
             if k not in x.keys():
-                log(k)
                 x[k] = {'image': np.zeros_like(an_img), 'id': an_id, 'key': a_key}
-    log("after pad: "+str(len(x.keys())))
     return x
 
 
 IMG_SIZE = 416
 BATCH_SIZE = 8
-# Create and register a gear that for each message in the stream
+# # Create and register a gear that for each message in the stream
 gb_mux = GearsBuilder('StreamReader')
 gb_mux.map(multiplexer)
 gb_mux.register('camera_in:*')
@@ -331,7 +341,7 @@ gb.map(pad_batch)
 gb.filter(downsampleStream)  # Filter out high frame rate
 gb.map(runYolo)              # Run the model
 gb.map(storeResults)         # Store the results
-gb.register('batchStream*', batch=8, durration=15)
+gb.register('batchStream*', batch=BATCH_SIZE, durration=15)
 
 
 
