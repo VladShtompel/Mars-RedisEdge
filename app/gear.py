@@ -129,6 +129,7 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     clip_coords(coords, img0_shape)
     return coords
 
+
 def letterbox_image(imgs, inp_dim):
     '''resize image with unchanged aspect ratio using padding'''
 
@@ -136,17 +137,16 @@ def letterbox_image(imgs, inp_dim):
     w, h = inp_dim
     new_w = int(img_w * min(w / img_w, h / img_h))
     new_h = int(img_h * min(w / img_w, h / img_h))
-    canvas = np.full((batch, h, w, cols), 128)
+    canvas = np.full((batch, h, w, cols), 128, dtype=np.uint8)
 
-    for idx, img in enumerate(imgs):
-        resized_image = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        canvas[idx, (h - new_h) // 2:(h - new_h) // 2 + new_h, (w - new_w) // 2:(w - new_w) // 2 + new_w, :] = resized_image
+    # Type 1
+    # for idx, img in enumerate(imgs):
+    #     resized_image = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    #     canvas[idx, (h - new_h) // 2:(h - new_h) // 2 + new_h, (w - new_w) // 2:(w - new_w) // 2 + new_w, :] = resized_image
 
-    # Put channels first
-    # canvas = np.transpose(canvas, (2, 0, 1))
-
-    # Add batch dimension of 1, convert to float32 and normalize
-    # canvas = canvas[None, :].astype(np.float32) / 255.0
+    # Type 2
+    np_images = np.array([cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR) for img in imgs], dtype=np.uint8)
+    canvas[:, (h - new_h) // 2:(h - new_h) // 2 + new_h, (w - new_w) // 2:(w - new_w) // 2 + new_w, :] = np_images
     return canvas
 
 
@@ -166,7 +166,7 @@ def runYolo(X):
     prf.start(int(X[s_keys[0]]['id'].split('-')[0]))        # Start a new profiler iteration
 
     for key in s_keys:
-        img, _id = load_img(X[key]['image']), X[key]['id']
+        img, _id = load_img(X[key]['image'], X[key]['shape']), X[key]['id']
         imgs.append(img)
         # log(str(imgs[-1].shape))
         ids.append(_id)
@@ -180,9 +180,12 @@ def runYolo(X):
     image_tensor = letterbox_image(numpy_imgs, (IMG_SIZE, IMG_SIZE))
     image_tensor = image_tensor.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
     # log("after reshape:" + str(image_tensor.shape))
-    image_tensor = redisAI.createTensorFromBlob('FLOAT', image_tensor.shape, bytearray(image_tensor.tobytes()))
+
+    image_tensor = redisAI.createTensorFromBlob('FLOAT', image_tensor.shape, image_tensor.tobytes())
 
     prf.add('resize')
+
+
     # log('resize')
     # Create the RedisAI model runner and run it
     modelRunner = redisAI.createModelRunner('yolo:model')
@@ -200,34 +203,39 @@ def runYolo(X):
     script_reply = redisAI.scriptRunnerRun(scriptRunner)
     prf.add('script')
     # log('script')
-    # The script outputs bounding boxes
-    shape = redisAI.tensorGetDims(script_reply)
-    buf = redisAI.tensorGetDataAsBlob(script_reply)
-    # Get boxes and re-scale them
-    # log(str(shape))
-    boxes = np.frombuffer(buf, dtype=np.float32).reshape(shape)
-    boxes = scale_coords([IMG_SIZE, IMG_SIZE], boxes, orig_shape)
 
+    all_results = []
+    for idx, k in enumerate(X.keys()):
+        # The script outputs bounding boxes
+        shape = redisAI.tensorGetDims(script_reply[idx])
+        buf = redisAI.tensorGetDataAsBlob(script_reply[idx])
+        # Get boxes and re-scale them
+        # log(str(shape))
+        boxes = np.frombuffer(buf, dtype=np.float32).reshape(shape)
+        boxes = scale_coords([IMG_SIZE, IMG_SIZE], boxes, orig_shape)
 
-    # Iterate boxes to extract the people
-    boxes_out = []
-    people_count = 0
-    for box in boxes:
-        # if box[4] == 0.0:  # Remove zero-confidence detections
-        #     continue
-        # if box[-1] != 0:  # Ignore detections that aren't people
-        #     continue
-        people_count += 1
-        x1 = box[0]
-        y1 = box[1]
-        x2 = box[2]
-        y2 = box[3]
+        # Iterate boxes to extract the people
+        boxes_out = []
+        people_count = 0
+        for box in boxes:
+            # if box[4] == 0.0:  # Remove zero-confidence detections
+            #     continue
+            # if box[-1] != 0:  # Ignore detections that aren't people
+            #     continue
+            people_count += 1
+            x1 = box[0]
+            y1 = box[1]
+            x2 = box[2]
+            y2 = box[3]
 
-        # Store boxes as a flat list
-        boxes_out += [x1,y1,x2,y2]
+            # Store boxes as a flat list
+            boxes_out += [x1,y1,x2,y2]
+
+        all_results.append((ids[idx], people_count, boxes_out))
+
     prf.add('boxes')
-    # log('boxes')
-    return ids[0], people_count, boxes_out
+    return all_results[0]
+
 
 def storeResults(x):
     ''' Stores the results in Redis Stream and TimeSeries data structures '''
@@ -277,8 +285,8 @@ def storeResults(x):
 
 def frameAccumulator(a, r):
     a = a if a else OrderedDict()
-    camera, msg_id = sorted(r['value'].keys())
-    a[camera] = {'image': r['value'][camera], 'id': r['value'][msg_id], 'key': r['key']}
+    camera, msg_id = r['value']['cam'], r['id']
+    a[camera] = {'image': r['value']['image'], 'id': msg_id, 'key': r['key'], 'shape': r['value']['shape']}
 
     return a
 
@@ -287,24 +295,19 @@ def multiplexer(x):
     execute('XADD', f'batchStream{{{hashtag()}}}', '*', x['key'], x['value']['image'], 'id', x['id'])
 
 
-def load_img(x):
+def load_img(x, shp):
     global IMG_SIZE
     if not isinstance(x, np.ndarray):
         try:
             s = time()
-            ev = eval(x)
-            t_ev = time()
-            buf = io.BytesIO(ev)
-            t_buf = time()
-            opn = Image.open(buf)
-            # npi = np.fromstring(opn, np.uint8)#.reshape((720, 576, 3))
-            t_opn = time()
-            # im = cv2.imdecode(npi, 1)[:, :, ::-1] #np.array(opn)
-            # im = npi
-            im = np.array(opn)
-            t_np = time()
-            t_ttl = t_np - s
-            # log(f'eval {t_ev-s:.6f} buf {t_buf-t_ev:.6f} open {t_opn-t_buf:.6f} numpy {t_np-t_opn:.6f} total {t_ttl:.6f}')
+            # Type 1 - 8ms avg - encode\decode
+            # buf = io.BytesIO(x)
+            # opn = Image.open(buf)
+            # im = np.array(opn)
+
+            # Type 2 - 1ms< avg - sending bytes
+            im = np.frombuffer(x, dtype=np.uint8).reshape(eval(shp))
+            # log(f"loaded in {time()-s}")
         except:
             im = np.zeros((IMG_SIZE, IMG_SIZE, 3))
     else:
@@ -313,44 +316,30 @@ def load_img(x):
     return im
 
 
-def pad_batch(x):
+def padBatch(x):
     global BATCH_SIZE
     some_item = list(x.values())[0]
-    # log(str(some_item))
-    an_img, an_id, a_key = load_img(some_item['image']), some_item['id'], some_item['key']
+    an_id, a_key, a_shape = some_item['id'], some_item['key'], some_item['shape']
     if len(x.keys()) < BATCH_SIZE:
         for k in [f'camera_in:{i}' for i in range(BATCH_SIZE)]:
             if k not in x.keys():
-                x[k] = {'image': np.zeros_like(an_img), 'id': an_id, 'key': a_key}
+                x[k] = {'image': np.zeros(eval(some_item['shape'])), 'id': an_id, 'key': a_key, 'shape': a_shape}
     return x
 
 
 IMG_SIZE = 416
 BATCH_SIZE = 8
-# # Create and register a gear that for each message in the stream
-gb_mux = GearsBuilder('StreamReader')
-gb_mux.map(multiplexer)
-gb_mux.register('camera_in:*')
 
+# # Create and register a gear that for each message in the stream
+# gb_mux = GearsBuilder('StreamReader')
+# gb_mux.map(multiplexer)
+# gb_mux.register('camera_in:*')
 
 
 gb = GearsBuilder('StreamReader')
-gb.accumulate(frameAccumulator)
-# gb.filter(lambda x: len(x.keys()) == 8)
-gb.map(pad_batch)
-gb.filter(downsampleStream)  # Filter out high frame rate
-gb.map(runYolo)              # Run the model
-gb.map(storeResults)         # Store the results
+gb.accumulate(frameAccumulator) # Accumulate single frames into a batch
+gb.map(padBatch)                # Pad to required size if necessary
+gb.filter(downsampleStream)     # Filter out high frame rate
+gb.map(runYolo)                 # Run the model
+gb.map(storeResults)            # Store the results
 gb.register('batchStream*', batch=BATCH_SIZE, durration=15)
-
-
-
-
-
-
-# gb.filter(downsampleStream)  # Filter out high frame rate
-# gb.register('camera:*')
-# gb_mux = GearsBuilder('StreamReader')
-# gb.filter(downsampleStream)  # Filter out high frame rate
-# gb_mux.map(multiplexer)
-# gb_mux.register('filtered:*')

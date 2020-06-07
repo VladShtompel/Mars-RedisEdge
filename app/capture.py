@@ -96,11 +96,27 @@ if __name__ == '__main__':
 
     for (count, img) in loader:
         _, data = cv2.imencode(args.fmt, img)
-        msg = {
+        shp = img.shape
+
+        msg_det = {
             'count': count,
-            'image': data.tobytes()
+            'image':img.tobytes(),  # not encoding image that is sent to detection
+            'shape': str(shp),
+            'cam': args.output  # note camera for redistribution after detection
         }
-        _id = conn.xadd(args.output, msg, maxlen=args.maxlen)
+
+        msg_srv = {
+            'count': count,
+            'image': data.tobytes(),
+            'cam': args.output  # note camera for redistribution after detection
+        }
+
+        # send frame to detection
+        _id = conn.xadd("batchStream", msg_det, maxlen=args.maxlen)
+
+        # send frame to display
+        conn.xadd(args.output, msg_srv, maxlen=args.maxlen)
+
         if args.verbose:
             print('frame: {} id: {}'.format(count, _id))
         if args.count is not None and count+1 == args.count:
