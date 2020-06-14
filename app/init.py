@@ -27,7 +27,7 @@ if __name__ == '__main__':
 
     # Load the RedisAI model
     print('Loading model - ', end='')
-    with open('models/yolov3-8-416-cuda0.trace', 'rb') as f:
+    with open('models/yolov3-8-416-cuda0-cont.trace', 'rb') as f:
         model = f.read()
         res = conn.execute_command('AI.MODELSET', 'yolo:model', 'TORCH', args.device, # 'BATCHSIZE', 1,
                                    'INPUTS', 'input', 'OUTPUTS', 'output', 'BLOB', model)

@@ -5,13 +5,14 @@ import redisAI
 import numpy as np
 from time import time
 from PIL import Image
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 from redisgears import executeCommand as execute
 
 # Globals for downsampling
 _mspf = 1000 / 10.0      # Msecs per frame (initialized with 10.0 FPS)
-_next_ts = 0             # Next timestamp to sample a frame
+
+_next_ts = 0#defaultdict(lambda: 0, {})             # Next timestamp to sample a frame
 
 class SimpleMovingAverage(object):
     ''' Simple moving average '''
@@ -91,21 +92,6 @@ per step metrics.
 '''
 prf = Profiler()
 
-
-def downsampleStream(x):
-    ''' Drops input frames to match FPS '''
-    global _mspf, _next_ts
-    try:
-        execute('TS.INCRBY', x['camera_in:0']['key']+':in_fps', 1)  # Store the input fps count
-    except:
-        pass
-    ts, _ = map(int, str(x['camera_in:0']['id']).split('-'))         # Extract the timestamp part from the message ID
-    sample_it = _next_ts <= ts
-    if sample_it:                                           # Drop frames until the next timestamp is in the present/past
-        _next_ts = ts + _mspf
-    return sample_it
-
-
 def clip_coords(boxes, img_shape):
     # Clip bounding xyxy bounding boxes to image shape (height, width)
     boxes[:, 0] = np.clip(boxes[:, 0], 0, img_shape[1])  # x1
@@ -162,8 +148,8 @@ def runYolo(X):
 
     imgs = []
     ids = []
+    prf.start(int(X.pop('ts', None)))        # Start a new profiler iteration
     s_keys = sorted(X.keys())
-    prf.start(int(X[s_keys[0]]['id'].split('-')[0]))        # Start a new profiler iteration
 
     for key in s_keys:
         img, _id = load_img(X[key]['image'], X[key]['shape']), X[key]['id']
@@ -178,10 +164,9 @@ def runYolo(X):
 
     # Resize, normalize and tensorize the image for the model (number of images, width, height, channels)
     image_tensor = letterbox_image(numpy_imgs, (IMG_SIZE, IMG_SIZE))
-    image_tensor = image_tensor.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
-    # log("after reshape:" + str(image_tensor.shape))
-
-    image_tensor = redisAI.createTensorFromBlob('FLOAT', image_tensor.shape, image_tensor.tobytes())
+    image_tensor = image_tensor.transpose(0, 3, 1, 2) / 255.0
+    image_tensor = np.ascontiguousarray(image_tensor, dtype=np.float32)
+    image_tensor = redisAI.createTensorFromBlob('FLOAT', image_tensor.shape, image_tensor.data)
 
     prf.add('resize')
 
@@ -283,23 +268,39 @@ def storeResults(x):
     else:
         return 'I counted {} people in the frame! Ah ah ah!'.format(people)
 
+
+def downsampleStream(x):
+    ''' Drops input frames to match FPS '''
+    global _mspf, _next_ts
+
+    try:
+        execute('TS.INCRBY', x['camera_in:0']['key']+':in_fps', 1)  # Store the input fps count
+    except:
+        pass
+    ts = x['ts'] # Extract the timestamp part from the message ID
+    sample_it = _next_ts <= ts
+    if sample_it:                             # Drop frames until the next timestamp is in the present/past
+        _next_ts = ts + _mspf
+    return sample_it
+
+
 def frameAccumulator(a, r):
     a = a if a else OrderedDict()
     camera, msg_id = r['value']['cam'], r['id']
     a[camera] = {'image': r['value']['image'], 'id': msg_id, 'key': r['key'], 'shape': r['value']['shape']}
-
+    r_ts = int(msg_id.split('-')[0])
+    a['ts'] = min(r_ts, a.get('ts', r_ts))
     return a
 
-def multiplexer(x):
-    # log(str(x['value']['image']))
-    execute('XADD', f'batchStream{{{hashtag()}}}', '*', x['key'], x['value']['image'], 'id', x['id'])
+# def multiplexer(x):
+#     # log(str(x['value']['image']))
+#     execute('XADD', f'batchStream{{{hashtag()}}}', '*', x['key'], x['value']['image'], 'id', x['id'])
 
 
 def load_img(x, shp):
     global IMG_SIZE
     if not isinstance(x, np.ndarray):
         try:
-            s = time()
             # Type 1 - 8ms avg - encode\decode
             # buf = io.BytesIO(x)
             # opn = Image.open(buf)
@@ -307,9 +308,8 @@ def load_img(x, shp):
 
             # Type 2 - 1ms< avg - sending bytes
             im = np.frombuffer(x, dtype=np.uint8).reshape(eval(shp))
-            # log(f"loaded in {time()-s}")
         except:
-            im = np.zeros((IMG_SIZE, IMG_SIZE, 3))
+            im = np.zeros((IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8)
     else:
         im = x
 
@@ -320,21 +320,22 @@ def padBatch(x):
     global BATCH_SIZE
     some_item = list(x.values())[0]
     an_id, a_key, a_shape = some_item['id'], some_item['key'], some_item['shape']
-    if len(x.keys()) < BATCH_SIZE:
+    # log(f"it took {1000*time()-x['ts']:.3f}ms to accumulate {len(x.values())-1}")
+    if len(x.keys()) < BATCH_SIZE + 1:
         for k in [f'camera_in:{i}' for i in range(BATCH_SIZE)]:
             if k not in x.keys():
-                x[k] = {'image': np.zeros(eval(some_item['shape'])), 'id': an_id, 'key': a_key, 'shape': a_shape}
+                x[k] = {'image': np.zeros(eval(a_shape), dtype=np.uint8), 'id': an_id, 'key': a_key, 'shape': a_shape}
     return x
 
 
-IMG_SIZE = 416
-BATCH_SIZE = 8
 
 # # Create and register a gear that for each message in the stream
 # gb_mux = GearsBuilder('StreamReader')
 # gb_mux.map(multiplexer)
 # gb_mux.register('camera_in:*')
 
+IMG_SIZE = 416
+BATCH_SIZE = 8
 
 gb = GearsBuilder('StreamReader')
 gb.accumulate(frameAccumulator) # Accumulate single frames into a batch
@@ -342,4 +343,4 @@ gb.map(padBatch)                # Pad to required size if necessary
 gb.filter(downsampleStream)     # Filter out high frame rate
 gb.map(runYolo)                 # Run the model
 gb.map(storeResults)            # Store the results
-gb.register('batchStream*', batch=BATCH_SIZE, durration=15)
+gb.register('batchStream*', batch=BATCH_SIZE)
